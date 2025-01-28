@@ -13,6 +13,7 @@ import {
 } from './serviceManager';
 import { reportError, isValidFile, isConfigFile, isInWorkspace } from '../helper';
 import { downloadFile, uploadFile } from '../fileHandlers';
+import * as debounce from 'lodash.debounce';
 
 let workspaceWatcher: vscode.Disposable;
 
@@ -82,6 +83,31 @@ async function downloadOnOpen(uri: vscode.Uri) {
   }
 }
 
+/**
+ * Checks if the file is a log file based on its extension or suffix.
+ * @param filePath The file path to check.
+ * @returns True if it's a log file, else false.
+ */
+function isLogFile(filePath: string): boolean {
+  return /\.log$/.test(filePath) || /_log$/.test(filePath);
+}
+
+/**
+ * Handles the active editor change by downloading the file.
+ * @param uri The URI of the file to download.
+ */
+async function handleActiveEditorChange(uri: vscode.Uri) {
+  const fileService = getFileService(uri);
+  if (!fileService) {
+    return;
+  }
+  try {
+    await downloadFile(uri);
+  } catch (error) {
+    app.sftpBarItem.updateStatus(StatusBarItem.Status.error);
+  }
+}
+
 function watchWorkspace({
   onDidSaveFile,
   onDidSaveSftpConfig,
@@ -125,6 +151,19 @@ function init() {
   watchWorkspace({
     onDidSaveFile: handleFileSave,
     onDidSaveSftpConfig: handleConfigSave,
+  });
+
+  // Add the active editor change listener with debouncing
+  const debouncedHandleActiveEditorChange = debounce(handleActiveEditorChange, 300);
+  vscode.window.onDidChangeActiveTextEditor((editor: vscode.TextEditor | undefined) => {
+    if (!editor) return;
+    const uri = editor.document.uri;
+    if (!isValidFile(uri) || !isInWorkspace(uri.fsPath)) {
+      return;
+    }
+    if (isLogFile(uri.fsPath)) {
+      debouncedHandleActiveEditorChange(uri);
+    }
   });
 }
 
